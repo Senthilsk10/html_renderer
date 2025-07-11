@@ -4,6 +4,7 @@ import base64
 from typing import List, Dict, Any, Optional
 import plotly.graph_objects as go
 from plotly.offline import plot
+import html
 
 class Renderer:
     """
@@ -77,12 +78,13 @@ class Renderer:
     
     def _get_html_header(self) -> str:
         """Generate HTML document header."""
+        escaped_title = html.escape(self.title)
         return f'''<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{self.title}</title>'''
+    <title>{escaped_title}</title>'''
     
     def _get_css_links(self) -> str:
         """Generate CSS links and styles."""
@@ -155,12 +157,6 @@ class Renderer:
             min-height: 180px;
             height: auto !important;
         }}
-    </style>''')
-        
-        # Custom CSS
-        if self.custom_css:
-            css_parts.append(f'''
-    <style>
         {self.custom_css}
     </style>''')
         
@@ -255,21 +251,20 @@ class Renderer:
         # Main JavaScript
         js_parts.append('''
     <script>
-        document.addEventListener('DOMContentLoaded', function() {''')
+        document.addEventListener("DOMContentLoaded", function() {''')
         
         # KaTeX rendering
         if self.need_latex:
             js_parts.append('''
-            // Render LaTeX expressions
             renderMathInElement(document.body, {
                 delimiters: [
-                    {left: '$$', right: '$$', display: true},
-                    {left: '$', right: '$', display: false},
-                    {left: '\\(', right: '\\)', display: false},
-                    {left: '\\[', right: '\\]', display: true}
+                    {left: "$$", right: "$$", display: true},
+                    {left: "$", right: "$", display: false},
+                    {left: "\\(", right: "\\)", display: false},
+                    {left: "\\[", right: "\\]", display: true}
                 ],
                 throwOnError: false,
-                errorColor: '#cc0000'
+                errorColor: "#cc0000"
             });''')
         
         # Plotly rendering
@@ -279,7 +274,6 @@ class Renderer:
         # Custom JavaScript
         if self.custom_js:
             js_parts.append(f'''
-            // Custom JavaScript
             {self.custom_js}''')
         
         js_parts.append('''
@@ -293,62 +287,75 @@ class Renderer:
         if not self.plotly_figure:
             return ""
         
-        # Convert plotly figure to JSON
-        fig_json = self.plotly_figure.to_json()
-        
-        # Compact plotly config optimized for small embedded charts
-        default_config = {
-            'displayModeBar': False,  # Hide toolbar for compact display
-            'responsive': True,
-            'staticPlot': False,
-            'doubleClick': False,
-            'showTips': False,
-            'showAxisDragHandles': False,
-            'showAxisRangeEntryBoxes': False,
-            'modeBarButtonsToRemove': ['pan2d', 'select2d', 'lasso2d', 'resetScale2d', 'zoomIn2d', 'zoomOut2d']
-        }
-        
-        # Merge with custom config
-        config = {**default_config, **self.plotly_config}
-        
-        return f'''
-            // Render Plotly chart
+        try:
+            # Convert plotly figure to JSON with proper escaping
+            fig_dict = self.plotly_figure.to_dict()
+            fig_json = json.dumps(fig_dict, separators=(',', ':'))
+            
+            # Compact plotly config optimized for small embedded charts
+            default_config = {
+                'displayModeBar': False,  # Hide toolbar for compact display
+                'responsive': True,
+                'staticPlot': False,
+                'doubleClick': False,
+                'showTips': False,
+                'showAxisDragHandles': False,
+                'showAxisRangeEntryBoxes': False,
+                'modeBarButtonsToRemove': ['pan2d', 'select2d', 'lasso2d', 'resetScale2d', 'zoomIn2d', 'zoomOut2d']
+            }
+            
+            # Merge with custom config
+            config = {**default_config, **self.plotly_config}
+            config_json = json.dumps(config, separators=(',', ':'))
+            
+            return f'''
             try {{
                 const plotlyData = {fig_json};
-                const plotlyConfig = {json.dumps(config)};
+                const plotlyConfig = {config_json};
                 
-                // Optimize layout for compact display
                 if (plotlyData.layout) {{
-                    plotlyData.layout.margin = {{l: 40, r: 20, t: 30, b: 40}};
+                    plotlyData.layout.margin = plotlyData.layout.margin || {{}};
+                    Object.assign(plotlyData.layout.margin, {{l: 40, r: 20, t: 30, b: 40}});
                     plotlyData.layout.height = 200;
-                    plotlyData.layout.font = {{size: 11}};
-                    plotlyData.layout.showlegend = plotlyData.layout.showlegend !== false;
-                    if (plotlyData.layout.showlegend) {{
-                        plotlyData.layout.legend = {{
-                            ...plotlyData.layout.legend,
+                    plotlyData.layout.font = plotlyData.layout.font || {{}};
+                    plotlyData.layout.font.size = 11;
+                    if (plotlyData.layout.showlegend !== false) {{
+                        plotlyData.layout.legend = plotlyData.layout.legend || {{}};
+                        Object.assign(plotlyData.layout.legend, {{
                             font: {{size: 10}},
                             orientation: "h",
                             y: -0.2
-                        }};
+                        }});
                     }}
                 }}
                 
-                Plotly.newPlot('plotly-div', plotlyData.data, plotlyData.layout, plotlyConfig);
+                Plotly.newPlot("plotly-div", plotlyData.data, plotlyData.layout, plotlyConfig);
                 
-                // Handle window resize
-                window.addEventListener('resize', function() {{
-                    Plotly.Plots.resize('plotly-div');
+                window.addEventListener("resize", function() {{
+                    if (typeof Plotly !== "undefined" && Plotly.Plots) {{
+                        Plotly.Plots.resize("plotly-div");
+                    }}
                 }});
             }} catch (error) {{
-                console.error('Error rendering Plotly chart:', error);
-                document.getElementById('plotly-div').innerHTML = '<div style="text-align:center;padding:20px;color:#666;font-size:12px;">Chart unavailable</div>';
-            }} '''
+                console.error("Error rendering Plotly chart:", error);
+                const plotlyDiv = document.getElementById("plotly-div");
+                if (plotlyDiv) {{
+                    plotlyDiv.innerHTML = "<div style=\\"text-align:center;padding:20px;color:#666;font-size:12px;\\">Chart unavailable</div>";
+                }}
+            }}'''
+        except Exception as e:
+            error_msg = str(e).replace('"', '\\"')
+            return f'''
+            console.error("Error preparing Plotly chart:", "{error_msg}");
+            const plotlyDiv = document.getElementById("plotly-div");
+            if (plotlyDiv) {{
+                plotlyDiv.innerHTML = "<div style=\\"text-align:center;padding:20px;color:#666;font-size:12px;\\">Chart generation failed</div>";
+            }}'''
     
     def _get_html_footer(self) -> str:
         """Generate HTML document footer."""
         return '''</body>
 </html>'''
-
 
 
 class HTMLRenderer:
@@ -401,7 +408,7 @@ class HTMLRenderer:
         self.content_blocks.append({
             "type": "plotly",
             "figure": fig,
-            "config": config or {"responsive":True}
+            "config": config or {"responsive": True}
         })
         return self
 
@@ -414,34 +421,39 @@ class HTMLRenderer:
         })
         return self
 
-    # ------------------------------------------------------------------
-    # Utility: Render each block separately
-    # ------------------------------------------------------------------
     def render_as_blocks(self) -> List[str]:
         """Render every content block as its own self-contained HTML string."""
         rendered: List[str] = []
         for idx, block in enumerate(self.content_blocks):
-            if block["type"] == "text":
-                r = Renderer(
-                    content=block["content"],
-                    need_latex=True,
-                    content_type=block.get("content_type", "general"),
-                    title=f"{self.title} – Text {idx+1}"
+            try:
+                if block["type"] == "text":
+                    r = Renderer(
+                        content=block["content"],
+                        need_latex=True,
+                        content_type=block.get("content_type", "general"),
+                        title=f"{self.title} – Text {idx+1}"
+                    )
+                    rendered.append(r.render())
+                elif block["type"] == "plotly":
+                    r = Renderer(
+                        content="",
+                        need_plotly=True,
+                        plotly_figure=block["figure"],
+                        plotly_config=block["config"],
+                        title=f"{self.title} – Chart {idx+1}"
+                    )
+                    rendered.append(r.render())
+                elif block["type"] == "table":
+                    table_html = self.generate_table_html(block)
+                    r = Renderer(content=table_html, title=f"{self.title} – Table {idx+1}")
+                    rendered.append(r.render())
+            except Exception as e:
+                # Create an error block if rendering fails
+                error_r = Renderer(
+                    content=f'<div style="color: red; padding: 10px; border: 1px solid red; border-radius: 4px;">Error rendering block {idx+1}: {html.escape(str(e))}</div>',
+                    title=f"{self.title} – Error {idx+1}"
                 )
-                rendered.append(r.render())
-            elif block["type"] == "plotly":
-                r = Renderer(
-                    content="",
-                    need_plotly=True,
-                    plotly_figure=block["figure"],
-                    plotly_config=block["config"],
-                    title=f"{self.title} – Chart {idx+1}"
-                )
-                rendered.append(r.render())
-            elif block["type"] == "table":
-                table_html = self.generate_table_html(block)
-                r = Renderer(content=table_html, title=f"{self.title} – Table {idx+1}")
-                rendered.append(r.render())
+                rendered.append(error_r.render())
         return rendered
 
     def render(self, compact: bool = False) -> str:
@@ -450,12 +462,12 @@ class HTMLRenderer:
         Args:
             compact: If True, removes extra whitespace for a smaller output.
         """
-        html = self._render_full_html()
+        html_content = self._render_full_html()
         if compact:
             import re
             # Remove all extra whitespace and newlines
-            html = re.sub(r'\s+', ' ', html).strip()
-        return html
+            html_content = re.sub(r'\s+', ' ', html_content).strip()
+        return html_content
         
     def render_as_json(self, compact: bool = False) -> str:
         """Render the HTML and return as a JSON string.
@@ -463,16 +475,17 @@ class HTMLRenderer:
         Args:
             compact: If True, removes extra whitespace from the HTML.
         """
-        return json.dumps({"html": self.render(compact=compact)})
+        html_content = self.render(compact=compact)
+        # Use a custom JSON encoder to avoid escaping issues
+        return json.dumps({"html": html_content}, ensure_ascii=False, separators=(',', ':'))
         
     def render_as_compressed_json(self) -> str:
         """Render as minified HTML and compress with zlib + base64."""
-        
-        html = self.render(compact=True)
-        compressed = zlib.compress(html.encode('utf-8'))
+        html_content = self.render(compact=True)
+        compressed = zlib.compress(html_content.encode('utf-8'))
         return json.dumps({
             "html_compressed": base64.b64encode(compressed).decode('ascii')
-        })
+        }, ensure_ascii=False, separators=(',', ':'))
         
     def _render_full_html(self) -> str:
         """Internal: Generate the full HTML document."""
@@ -481,12 +494,13 @@ class HTMLRenderer:
         need_plotly = any(block.get("type") == "plotly" for block in self.content_blocks)
         
         # Start HTML document
-        html = f'''<!DOCTYPE html>
+        escaped_title = html.escape(self.title)
+        html_content = f'''<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{self.title}</title>
+    <title>{escaped_title}</title>
     {self._get_css(need_latex)}
 </head>
 <body>
@@ -495,22 +509,28 @@ class HTMLRenderer:
         
         # Render each content block
         for i, block in enumerate(self.content_blocks):
-            if block["type"] == "text":
-                html += self._render_text_block(block)
-            elif block["type"] == "plotly":
-                html += self._render_plotly_block(block, i)
-            elif block["type"] == "table":
-                html += self.generate_table_html(block)
-
+            try:
+                if block["type"] == "text":
+                    html_content += self._render_text_block(block)
+                elif block["type"] == "plotly":
+                    html_content += self._render_plotly_block(block, i)
+                elif block["type"] == "table":
+                    html_content += self.generate_table_html(block)
+            except Exception as e:
+                # Add error block if rendering fails
+                error_html = f'''<div style="color: red; padding: 10px; border: 1px solid red; border-radius: 4px; margin: 10px 0;">
+                    Error rendering block {i+1}: {html.escape(str(e))}
+                </div>'''
+                html_content += error_html
         
         # End HTML document
-        html += f'''
+        html_content += f'''
     </div>
     {self._get_js(need_latex, need_plotly)}
 </body>
 </html>'''
         
-        return html
+        return html_content
     
     def _render_text_block(self, block: Dict[str, Any]) -> str:
         """Render a single text block."""
@@ -530,37 +550,34 @@ class HTMLRenderer:
         headers = block["headers"]
         data = block["data"]
 
-        html = '<div class="table-container">'
-        html += '<table>'
+        html_content = '<div class="table-container">'
+        html_content += '<table>'
 
         if headers:
-            html += '<thead><tr>'
+            html_content += '<thead><tr>'
             for header in headers:
-                html += f'<th>{header}</th>'
-            html += '</tr></thead>'
+                html_content += f'<th>{html.escape(str(header))}</th>'
+            html_content += '</tr></thead>'
 
-        html += '<tbody>'
+        html_content += '<tbody>'
         for row in data:
-            html += '<tr>'
+            html_content += '<tr>'
             for cell in row:
-                html += f'<td>{cell}</td>'
-            html += '</tr>'
-        html += '</tbody>'
+                html_content += f'<td>{html.escape(str(cell))}</td>'
+            html_content += '</tr>'
+        html_content += '</tbody>'
 
-        html += '</table>'
-        html += '</div>'
-        return html
+        html_content += '</table>'
+        html_content += '</div>'
+        return html_content
 
     def _render_plotly_block(self, block: Dict[str, Any], block_id: int) -> str:
-        """Render a placeholder container for a Plotly figure. The actual JS to draw the figure is added later."""
-        # Generate a unique ID for the plotly div
+        """Render a placeholder container for a Plotly figure."""
         div_id = f"plotly-div-{block_id}"
-        container = (
-            f"""
-        <div class=\"plotly-container\">
-            <div id=\"{div_id}\" class=\"loading\">Loading chart...</div>
-        </div>"""
-        )
+        container = f'''
+        <div class="plotly-container">
+            <div id="{div_id}" class="loading">Loading chart...</div>
+        </div>'''
         return container
     
     def _get_css(self, need_latex: bool) -> str:
@@ -645,19 +662,21 @@ class HTMLRenderer:
             
         js += '''
     <script>
-        document.addEventListener('DOMContentLoaded', function() {'''
+        document.addEventListener("DOMContentLoaded", function() {'''
         
         if need_latex:
             js += '''
-            renderMathInElement(document.body, {
-                delimiters: [
-                    {left: '$$', right: '$$', display: true},
-                    {left: '$', right: '$', display: false},
-                    {left: '\\(', right: '\\)', display: false},
-                    {left: '\\[', right: '\\]', display: true}
-                ],
-                throwOnError: false
-            });'''
+            if (typeof renderMathInElement !== "undefined") {
+                renderMathInElement(document.body, {
+                    delimiters: [
+                        {left: "$$", right: "$$", display: true},
+                        {left: "$", right: "$", display: false},
+                        {left: "\\(", right: "\\)", display: false},
+                        {left: "\\[", right: "\\]", display: true}
+                    ],
+                    throwOnError: false
+                });
+            }'''
             
         if need_plotly:
             js += self._get_all_plotly_js()
@@ -676,37 +695,59 @@ class HTMLRenderer:
         js = ""
         for i, block in enumerate(self.content_blocks):
             if block["type"] == "plotly":
-                fig = block["figure"]
-                config = block["config"]
-                div_id = f"plotly-div-{i}"
-                
-                fig_json = fig.to_json()
-                
-                default_config = {
-                    'displayModeBar': True,
-                    'responsive': True,
-                }
-                final_config = {**default_config, **config}
-                
-                js += f'''
+                try:
+                    fig = block["figure"]
+                    config = block["config"]
+                    div_id = f"plotly-div-{i}"
+                    
+                    # Convert figure to dict and then to JSON with proper escaping
+                    fig_dict = fig.to_dict()
+                    fig_json = json.dumps(fig_dict, separators=(',', ':'))
+                    
+                    default_config = {
+                        'displayModeBar': True,
+                        'responsive': True,
+                    }
+                    final_config = {**default_config, **config}
+                    config_json = json.dumps(final_config, separators=(',', ':'))
+                    
+                    js += f'''
                 try {{
-                    const plotlyData_{i} = {fig_json};
-                    const plotlyConfig_{i} = {json.dumps(final_config)};
-                    Plotly.newPlot('{div_id}', plotlyData_{i}.data, plotlyData_{i}.layout, plotlyConfig_{i});
+                    if (typeof Plotly !== "undefined") {{
+                        const plotlyData_{i} = {fig_json};
+                        const plotlyConfig_{i} = {config_json};
+                        Plotly.newPlot("{div_id}", plotlyData_{i}.data, plotlyData_{i}.layout, plotlyConfig_{i});
+                    }} else {{
+                        console.error("Plotly library not loaded");
+                        document.getElementById("{div_id}").innerHTML = "<div style=\\"text-align:center;padding:20px;color:#666;font-size:12px;\\">Plotly library not available</div>";
+                    }}
                 }} catch (e) {{
-                    console.error('Error rendering plotly chart:', e);
-                    document.getElementById('{div_id}').innerHTML = 'Error rendering chart.';
-                }}
-                '''
+                    console.error("Error rendering plotly chart {i}:", e);
+                    document.getElementById("{div_id}").innerHTML = "<div style=\\"text-align:center;padding:20px;color:#666;font-size:12px;\\">Error rendering chart</div>";
+                }}'''
+                except Exception as e:
+                    error_msg = str(e).replace('"', '\\"')
+                    js += f'''
+                console.error("Error preparing chart {i}:", "{error_msg}");
+                document.getElementById("plotly-div-{i}").innerHTML = "<div style=\\"text-align:center;padding:20px;color:#666;font-size:12px;\\">Chart preparation failed</div>";'''
         
+        # Add resize handlers
         js += '''
-        window.addEventListener('resize', function() {'''
+        window.addEventListener("resize", function() {
+            if (typeof Plotly !== "undefined" && Plotly.Plots) {'''
+        
         for i, block in enumerate(self.content_blocks):
             if block["type"] == "plotly":
                 div_id = f"plotly-div-{i}"
                 js += f'''
-                Plotly.Plots.resize('{div_id}');'''
+                try {{
+                    Plotly.Plots.resize("{div_id}");
+                }} catch (e) {{
+                    console.warn("Error resizing chart {i}:", e);
+                }}'''
+        
         js += '''
+            }
         });'''
         
         return js
